@@ -1,0 +1,31 @@
+name: Release Windows Binary
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Deno
+      uses: denoland/setup-deno@v1
+      with:
+        deno-version: v1.x
+
+    - name: Compile for Windows
+      run: deno compile --target=x86_64-pc-windows-msvc -A --output local-dicomweb.exe main.mjs
+
+    - name: Upload binary to release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./local-dicomweb.exe
+        asset_name: local-dicomweb.exe
+        asset_content_type: application/octet-stream
