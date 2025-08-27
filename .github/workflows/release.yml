@@ -21,11 +21,8 @@ jobs:
       run: deno compile --target=x86_64-pc-windows-msvc -A --output local-dicomweb.exe main.mjs
 
     - name: Upload binary to release
-      uses: actions/upload-release-asset@v1
+      uses: softprops/action-gh-release@v1
+      with:
+        files: local-dicomweb.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./local-dicomweb.exe
-        asset_name: local-dicomweb.exe
-        asset_content_type: application/octet-stream
