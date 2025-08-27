@@ -19,10 +19,10 @@ jobs:
     - name: Setup Deno
       uses: denoland/setup-deno@v1
       with:
-        deno-version: v1.x
+        deno-version: v2.x
 
     - name: Compile for Windows
-      run: deno compile --target=x86_64-pc-windows-msvc -A --output local-dicomweb.exe main.mjs
+      run: deno compile -A --target=x86_64-pc-windows-msvc main.mjs --output local-dicomweb.exe
 
     - name: Upload binary to release
       uses: softprops/action-gh-release@v1
