@@ -13,20 +13,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Setup Deno
-      uses: denoland/setup-deno@v1
-      with:
-        deno-version: v2.x
+      - name: Setup Deno
+        uses: denoland/setup-deno@v1
+        with:
+          deno-version: v2.x
 
-    - name: Compile for Windows
-      run: deno compile -A --target=x86_64-pc-windows-msvc main.mjs --output local-dicomweb.exe
+      - name: Compile for Windows
+        run: deno compile -A --target=x86_64-pc-windows-msvc main.mjs --output local-dicomweb.exe
 
-    - name: Upload binary to release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: local-dicomweb.exe
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload binary to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: local-dicomweb.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

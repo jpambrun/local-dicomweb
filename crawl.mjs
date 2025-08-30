@@ -23,7 +23,7 @@ const queue = new PQueue({ concurrency: 10 });
 
 let db = open({
   path: "_dicomweb",
-  useVersions: true
+  useVersions: true,
 });
 
 const SERIES_LIST_ITEMS = [
@@ -101,12 +101,15 @@ const convertToDicomweb = (src, dst = {}) => {
     const hextag = tagToString(tag);
     if (value) {
       switch (vr.name) {
-        case "PN":
-          dst[hextag] = {
-            vr: vr.name,
-            Value: value.toStrings(vr.name, bigEndian, characterSets).map((pn) => ({ Alphabetic: pn })),
-          };
+        case "PN": {
+          const valueStrings = value.toStrings(vr.name, bigEndian, characterSets).filter((pn) => pn !== "");
+          if (valueStrings.length === 0) {
+            dst[hextag] = { vr: vr.name };
+          } else {
+            dst[hextag] = { vr: vr.name, Value: valueStrings.map((pn) => ({ Alphabetic: pn })) };
+          }
           break;
+        }
         case "US":
         case "SS":
         case "UL":
