@@ -170,6 +170,12 @@ const convertToDicomweb = (src, dst = {}) => {
 };
 
 const insertStudy = async (studyInstanceUID, dicomDict) => {
+  const modality = dicomDict["00080060"]?.Value?.[0];
+  const studyModalityKey = `studymodalities:${studyInstanceUID}:modality:${modality}`;
+  if (modality && !db.get(studyModalityKey)) {
+    await db.put(studyModalityKey, modality);
+  }
+
   const studyKey = `study:${studyInstanceUID}`;
   if (await db.get(studyKey)) return;
 
@@ -180,8 +186,7 @@ const insertStudy = async (studyInstanceUID, dicomDict) => {
     }
   }
 
-  const written = await db.put(studyKey, study, 1);
-  if (!written) {
+  if (!await db.put(studyKey, study, 1)) {
     throw new Error("Failed to insert study entry");
   }
 };

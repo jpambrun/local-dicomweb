@@ -50,39 +50,51 @@ router.get("/dicomweb/studies", async (ctx) => {
   const patientID = ctx.request.url.searchParams.get("00100020");
 
   const studies = [
-    ...db.getRange({ start: "study", end: "study" + "\ufffd" }).filter(({ value: dicomDict }) => {
-      if (ModalitiesInStudy) {
-        const requestedModalities = ModalitiesInStudy.split(",").map((m) => m.trim());
-        const modalities = dicomDict["00080060"]?.Value?.[0]?.split?.("\\") || [];
-        return requestedModalities.some((m) => modalities.includes(m));
-      }
+    ...db.getRange({ start: "study:", end: "study:" + "\ufffd" })
+      .map(({ value: study }) => {
+        const studyInstanceUID = study["0020000D"]?.Value?.[0];
+        const modalities = [
+          ...db.getRange({
+            start: `studymodalities:${studyInstanceUID}:modality:`,
+            end: `studymodalities:${studyInstanceUID}:modality:\ufffd`,
+          }).map(({ value }) => value),
+        ];
+        study["00080061"] = { vr: "CS", Value: modalities };
+        return study;
+      })
+      .filter((study) => {
+        if (ModalitiesInStudy) {
+          const requestedModalities = ModalitiesInStudy.split(",").map((m) => m.trim());
+          const modalities = study["00080061"]?.Value?.[0]?.split?.("\\") || [];
+          return requestedModalities.some((m) => modalities.includes(m));
+        }
 
-      if (PatientName) {
-        const patientName = dicomDict["00100010"]?.Value?.[0]?.Alphabetic || "";
-        return patientName.toLowerCase().includes(PatientName.toLowerCase().replaceAll("*", ""));
-      }
+        if (PatientName) {
+          const patientName = study["00100010"]?.Value?.[0]?.Alphabetic || "";
+          return patientName.toLowerCase().includes(PatientName.toLowerCase().replaceAll("*", ""));
+        }
 
-      if (StudyDescription) {
-        const studyDesc = dicomDict["00081030"]?.Value?.[0] || "";
-        return studyDesc.toLowerCase().includes(StudyDescription.toLowerCase().replaceAll("*", ""));
-      }
+        if (StudyDescription) {
+          const studyDesc = study["00081030"]?.Value?.[0] || "";
+          return studyDesc.toLowerCase().includes(StudyDescription.toLowerCase().replaceAll("*", ""));
+        }
 
-      if (patientID) {
-        const id = dicomDict["00100020"]?.Value?.[0] || "";
-        return id.toLowerCase().includes(patientID.toLowerCase().replaceAll("*", ""));
-      }
-      return true;
-    }).map(({ value }) => value),
+        if (patientID) {
+          const id = study["00100020"]?.Value?.[0] || "";
+          return id.toLowerCase().includes(patientID.toLowerCase().replaceAll("*", ""));
+        }
+        return true;
+      }).map((study) => {
+        const studyInstanceUID = study["0020000D"]?.Value?.[0];
+        study["00201208"] = {
+          vr: "IS",
+          Value: [
+            db.getCount({ start: `instance:${studyInstanceUID}`, end: `instance:${studyInstanceUID}\ufffd` }),
+          ],
+        };
+        return study;
+      }),
   ];
-
-  for (const study of studies) {
-    const studyInstanceUID = study["0020000D"]?.Value?.[0];
-    study["00201208"] = {
-      vr: "IS",
-      Value: [await db.getCount({ start: `instance:${studyInstanceUID}`, end: `instance:${studyInstanceUID}\ufffd` })],
-    };
-    study["00080061"] = { vr: "CS", Value: [study["00080060"]?.Value?.[0]] };
-  }
 
   studies.sort((a, b) => {
     // by patient name, then by study date desc
@@ -160,24 +172,24 @@ router.get(
     const transferSyntax = dicomDict["00020010"]?.Value?.[0];
     const pixelData = dicomDict["7FE00010"];
     const filePath = dicomDict["00090001"]?.Value?.[0];
+    const numberOfFrames = dicomDict["00280008"]?.Value?.[0];
     const frameIndex = parseInt(ctx.params.frameNumber, 10) - 1;
     const BulkDataURI = pixelData?.value?.[frameIndex]?.BulkDataURI || pixelData?.BulkDataURI;
-    if (!BulkDataURI) console.log(pixelData);
+    if (!BulkDataURI) throw new Error("No BulkDataURI found for multiframe data");
 
-    if (dicomDict["00280008"]?.Value?.[0] > 1) {
-      const numberOfFrames = dicomDict["00280008"]?.Value?.[0];
+    if (numberOfFrames > 1 && pixelData?.BulkDataURI) {
+      // one continuous array, we need to find the offset within to stream from.
       const rows = dicomDict["00280010"]?.Value?.[0];
       const cols = dicomDict["00280011"]?.Value?.[0];
       const bitsAllocated = dicomDict["00280100"]?.Value?.[0];
       const samplesPerPixel = dicomDict["00280002"]?.Value?.[0];
-      const BulkDataURI = dicomDict["7FE00010"]?.BulkDataURI;
 
       if (!samplesPerPixel || !rows || !cols || !bitsAllocated) {
         throw new Error(
           `Missing required DICOM attributes for multiframe data ${samplesPerPixel}, ${rows}, ${cols}, ${bitsAllocated}`,
         );
       }
-      if (!BulkDataURI) throw new Error("No BulkDataURI found for multiframe data");
+
       const bytesPerFrame = rows * cols * samplesPerPixel * (bitsAllocated / 8);
       const expectedFrameSize = numberOfFrames * bytesPerFrame;
 
