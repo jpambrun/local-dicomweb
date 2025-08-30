@@ -2,11 +2,10 @@
 import {
   elementFlow,
   elementSink,
-  FragmentsPart,
-  HeaderPart,
   parseFlow,
   pipe,
   PreamblePart,
+  toIndeterminateLengthSequences,
   ValueChunk,
 } from "https://esm.sh/gh/jpambrun/dicom-streams-js@f250f9f";
 import stream from "node:stream";
@@ -19,7 +18,7 @@ import process from "node:process";
 
 import { open } from "npm:lmdb";
 
-const queue = new PQueue({ concurrency: 10 });
+const queue = new PQueue({ concurrency: 20 });
 
 let db = open({
   path: "_dicomweb",
@@ -77,18 +76,15 @@ class FilterLargeValue extends stream.Transform {
     this.currentVR = null;
     this.VRToFilter = ["OB", "OW", "OF", "UN"];
   }
-  _transform(chunk, encoding, callback) {
+  _transform(chunk, _encoding, callback) {
+    if (chunk instanceof PreamblePart) return callback();
+    this.currentVR = chunk?.vr?.name || this.currentVR;
     if (
-      chunk instanceof ValueChunk && chunk?.bytes?.length > this.maxSize && this.VRToFilter.includes(this.currentVR)
+      chunk instanceof ValueChunk &&
+      chunk?.bytes?.length > this.maxSize &&
+      this.VRToFilter.includes(this.currentVR)
     ) {
       chunk.bytes = Buffer.alloc(0);
-    } else if (chunk instanceof FragmentsPart) {
-      this.currentVR = chunk.vr.name;
-    } else if (chunk instanceof HeaderPart) {
-      this.currentVR = chunk.vr.name;
-    } else if (chunk instanceof PreamblePart) {
-      callback();
-      return;
     }
     callback(null, chunk);
   }
@@ -100,6 +96,11 @@ const convertToDicomweb = (src, dst = {}) => {
     const { vr, bigEndian, value, tag, items, fragments } = element;
     const hextag = tagToString(tag);
     if (value) {
+      if (value.length === 0 && !element.range) {
+        dst[hextag] = { vr: vr.name };
+        continue;
+      }
+
       switch (vr.name) {
         case "PN": {
           const valueStrings = value.toStrings(vr.name, bigEndian, characterSets).filter((pn) => pn !== "");
@@ -205,31 +206,40 @@ const insertSeries = async (studyInstanceUID, seriesInstanceUID, dicomDict) => {
 async function processDicomFile(filePath) {
   if (await db.get(`filepath:${filePath}`)) return;
 
-  const stream = pipe(
-    fs.createReadStream(filePath, { highWaterMark: 1024 * 1024 }),
-    parseFlow(),
-    new FilterLargeValue(),
-    elementFlow(),
-    elementSink(async (elements) => {
-      try {
-        const dicomDict = convertToDicomweb(elements);
-        const sopInstanceUID = dicomDict["00080018"].Value?.[0];
-        const seriesInstanceUID = dicomDict["0020000E"].Value?.[0];
-        const studyInstanceUID = dicomDict["0020000D"].Value?.[0];
-        dicomDict["00083002"] = dicomDict["00020010"];
-        dicomDict["00090001"] = { vr: "LT", Value: [filePath] };
-        await db.put(`instance:${studyInstanceUID}:${seriesInstanceUID}:${sopInstanceUID}`, dicomDict);
-        await db.put(`filepath:${filePath}`, `instance:${studyInstanceUID}:${seriesInstanceUID}:${sopInstanceUID}`);
-        await insertStudy(studyInstanceUID, dicomDict);
-        await insertSeries(studyInstanceUID, seriesInstanceUID, dicomDict);
-      } catch (e) {
-        console.error(`Error processing dict ${filePath}:`, e);
-      }
-    }),
-  );
+  await new Promise((resolve) => {
+    const stream = pipe(
+      fs.createReadStream(filePath, { highWaterMark: 1024 * 1024 }),
+      parseFlow(),
+      toIndeterminateLengthSequences(),
+      new FilterLargeValue(),
+      elementFlow(),
+      elementSink(async (elements) => {
+        try {
+          const dicomDict = convertToDicomweb(elements);
+          const sopInstanceUID = dicomDict["00080018"].Value?.[0];
+          const seriesInstanceUID = dicomDict["0020000E"].Value?.[0];
+          const studyInstanceUID = dicomDict["0020000D"].Value?.[0];
+          dicomDict["00083002"] = dicomDict["00020010"];
+          dicomDict["00090001"] = { vr: "LT", Value: [filePath] };
+          await db.put(`instance:${studyInstanceUID}:${seriesInstanceUID}:${sopInstanceUID}`, dicomDict);
+          await insertStudy(studyInstanceUID, dicomDict);
+          await insertSeries(studyInstanceUID, seriesInstanceUID, dicomDict);
+          await db.put(`filepath:${filePath}`, `instance:${studyInstanceUID}:${seriesInstanceUID}:${sopInstanceUID}`);
+        } catch (e) {
+          console.error(`Error processing dict ${filePath}:`, e);
+        }
+        resolve();
+      }),
+    );
 
-  await stream.catch((e) => {
-    console.error(`Error processing stream ${filePath}:`, e);
+    stream.on("error", (e) => {
+      if (e.message.includes("Not a DICOM stream")) {
+        console.log(`Skipping non DICOM file: ${filePath}`);
+      } else {
+        console.error(`Error processing stream ${filePath}:`, e);
+      }
+      resolve();
+    });
   });
 }
 
