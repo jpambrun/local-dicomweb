@@ -253,7 +253,14 @@ const t1 = Date.now();
 let count = 0;
 for await (const entry of fsp.glob("**/*", { withFileTypes: true })) {
   if (entry.isDirectory()) continue;
-  if (![".dcm", ""].includes(path.extname(entry.name).toLowerCase())) continue;
+  const extension = path.extname(entry.name).toLowerCase().replace(".", "");
+  const extensionIsNumber = !isNaN(Number(extension));
+
+  if (!["dcm", ""].includes(extension) && !extensionIsNumber) {
+    console.log(`Skipping non DICOM file: ${entry.name}`);
+    continue;
+  }
+
   if (entry.name === "DICOMDIR") continue;
   const fullPath = path.join(entry.parentPath, entry.name);
   const relativePath = path.relative(process.cwd(), fullPath);
