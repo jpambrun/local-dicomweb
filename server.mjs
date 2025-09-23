@@ -212,13 +212,13 @@ router.get(
       const [start, end] = BulkDataURI.match(/range=(\d+)-(\d+)/).slice(1).map(Number);
       const frameStream = fs.createReadStream(filePath, { start, end, highWaterMark: 1024 * 1024 });
       ctx.response.body = frameStream;
+      ctx.response.headers.set("Content-Length", end - start);
     }
-
     ctx.response.headers.set("Content-Type", TRANSFER_SYNTAXES_TO_CONTENT_TYPE[transferSyntax] || "UNKNOWN");
   },
 );
 
-router.get("/dicomweb/bulkdata/:studyInstanceUID/:seriesInstanceUID/:sopInstanceUID/:tagPath", async (ctx) => {
+router.get("/dicomweb/bulkdata/:studyInstanceUID/:seriesInstanceUID/:sopInstanceUID/:tagPath*", async (ctx) => {
   const { studyInstanceUID, seriesInstanceUID, sopInstanceUID, tagPath } = ctx.params;
   const dicomDict = db.get(`instance:${studyInstanceUID}:${seriesInstanceUID}:${sopInstanceUID}`);
   if (!dicomDict) {
