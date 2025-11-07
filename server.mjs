@@ -4,8 +4,8 @@ import fs from "node:fs";
 import { Application, Router } from "jsr:@oak/oak";
 import { oakCors } from "https://deno.land/x/cors/mod.ts";
 import { open } from "npm:lmdb";
-import { processDicomFile } from './crawl.mjs'
-import { createMultipartTransformStream } from './multipartParser.mjs'
+import { processDicomFile } from "./crawl.mjs";
+import { createMultipartTransformStream } from "./multipartParser.mjs";
 
 const db = open({ path: "_dicomweb", useVersions: true });
 
@@ -32,10 +32,15 @@ const TRANSFER_SYNTAXES_TO_CONTENT_TYPE = {
   "1.2.840.10008.1.2.5": "image/dicom-rle;transfer-syntax=1.2.840.10008.1.2.5",
 };
 
-function recusivelyReplaceBulkDataURI(dict, pathPrefix = "") {
+function isValidDicomUID(uid) {
+  if (!uid || typeof uid !== "string" || uid.length > 64) return false;
+  return /^[0-9.]+$/.test(uid);
+}
+
+function recursivelyReplaceBulkDataURI(dict, pathPrefix = "") {
   for (const key in dict) {
     if (typeof dict[key] === "object" && dict[key] !== null) {
-      recusivelyReplaceBulkDataURI(dict[key], `${pathPrefix}${key}/`);
+      recursivelyReplaceBulkDataURI(dict[key], `${pathPrefix}${key}/`);
     } else if (key === "BulkDataURI") {
       dict[key] = pathPrefix.replace(/\/$/, "") + dict[key]; // Remove trailing slash
     }
@@ -117,6 +122,11 @@ router.get("/dicomweb/studies", async (ctx) => {
 
 router.get("/dicomweb/studies/:studyInstanceUID/series", async (ctx) => {
   const { studyInstanceUID } = ctx.params;
+  if (!isValidDicomUID(studyInstanceUID)) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Invalid studyInstanceUID" };
+    return;
+  }
   const series = [
     ...db.getRange({ start: `series:${studyInstanceUID}:`, end: `series:${studyInstanceUID}:\ufffd` }).map((
       { value },
@@ -151,17 +161,21 @@ router.post("/dicomweb/studies", async (ctx) => {
   const transform = createMultipartTransformStream(boundary);
   const partStream = ctx.request.body.stream.pipeThrough(transform);
   for await (const part of partStream) {
-      const filename = `./_stow/${crypto.randomUUID()}.dcm`;
-      await Deno.mkdir("./_stow", { recursive: true });
-      await Deno.writeFile(filename, part)
-      await processDicomFile(filename)
+    const filename = `./_stow/${crypto.randomUUID()}.dcm`;
+    await Deno.mkdir("./_stow", { recursive: true });
+    await Deno.writeFile(filename, part);
+    await processDicomFile(filename);
   }
   ctx.response.status = 202;
 });
 
-
 router.get("/dicomweb/studies/:studyInstanceUID/series/:seriesInstanceUID/metadata", async (ctx) => {
   const { studyInstanceUID, seriesInstanceUID } = ctx.params;
+  if (!isValidDicomUID(studyInstanceUID) || !isValidDicomUID(seriesInstanceUID)) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Invalid UID" };
+    return;
+  }
 
   const instances = [
     ...db.getRange({
@@ -177,14 +191,25 @@ router.get("/dicomweb/studies/:studyInstanceUID/series/:seriesInstanceUID/metada
   ctx.response.body = instances.map((dicomDict) => {
     const sopInstanceUID = dicomDict["00080018"]?.Value?.[0];
     const bulkDataPathPrefix = `/dicomweb/bulkdata/${studyInstanceUID}/${seriesInstanceUID}/${sopInstanceUID}/`;
-    return recusivelyReplaceBulkDataURI(dicomDict, bulkDataPathPrefix);
+    return recursivelyReplaceBulkDataURI(dicomDict, bulkDataPathPrefix);
   });
 });
 
 router.get(
   "/dicomweb/studies/:studyInstanceUID/series/:seriesInstanceUID/instances/:sopInstanceUID/frames/:frameNumber",
   async (ctx) => {
-    const { sopInstanceUID, studyInstanceUID, seriesInstanceUID } = ctx.params;
+    const { sopInstanceUID, studyInstanceUID, seriesInstanceUID, frameNumber } = ctx.params;
+    if (!isValidDicomUID(studyInstanceUID) || !isValidDicomUID(seriesInstanceUID) || !isValidDicomUID(sopInstanceUID)) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Invalid UID" };
+      return;
+    }
+    const frameNum = parseInt(frameNumber, 10);
+    if (isNaN(frameNum) || frameNum < 1) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Invalid frame number" };
+      return;
+    }
     const dicomDict = db.get(`instance:${studyInstanceUID}:${seriesInstanceUID}:${sopInstanceUID}`);
     if (!dicomDict) {
       ctx.response.status = 404;
@@ -196,7 +221,7 @@ router.get(
     const pixelData = dicomDict["7FE00010"];
     const filePath = dicomDict["00090001"]?.Value?.[0];
     const numberOfFrames = dicomDict["00280008"]?.Value?.[0];
-    const frameIndex = parseInt(ctx.params.frameNumber, 10) - 1;
+    const frameIndex = frameNum - 1;
     const BulkDataURI = pixelData?.value?.[frameIndex]?.BulkDataURI || pixelData?.BulkDataURI;
     if (!BulkDataURI) throw new Error("No BulkDataURI found for multiframe data");
 
@@ -243,6 +268,23 @@ router.get(
 
 router.get("/dicomweb/bulkdata/:studyInstanceUID/:seriesInstanceUID/:sopInstanceUID/:tagPath*", async (ctx) => {
   const { studyInstanceUID, seriesInstanceUID, sopInstanceUID, tagPath } = ctx.params;
+  if (!isValidDicomUID(studyInstanceUID) || !isValidDicomUID(seriesInstanceUID) || !isValidDicomUID(sopInstanceUID)) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Invalid UID" };
+    return;
+  }
+  const rangeParam = ctx.request.url.searchParams.get("range");
+  if (!rangeParam || !/^\d+-\d+$/.test(rangeParam)) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Invalid range parameter" };
+    return;
+  }
+  const [start, end] = rangeParam.split("-").map(Number);
+  if (isNaN(start) || isNaN(end) || start > end) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Invalid range values" };
+    return;
+  }
   const dicomDict = db.get(`instance:${studyInstanceUID}:${seriesInstanceUID}:${sopInstanceUID}`);
   if (!dicomDict) {
     ctx.response.status = 404;
@@ -251,7 +293,6 @@ router.get("/dicomweb/bulkdata/:studyInstanceUID/:seriesInstanceUID/:sopInstance
   }
 
   const filePath = dicomDict["00090001"]?.Value?.[0];
-  const [start, end] = ctx.request.url.searchParams.get("range").match(/(\d+)-(\d+)/).slice(1).map(Number);
   const frameStream = fs.createReadStream(filePath, { start, end, highWaterMark: 1024 * 1024 });
   ctx.response.body = frameStream;
   ctx.response.headers.set("Content-Type", "application/octet-stream");
@@ -263,4 +304,4 @@ app.use(router.routes());
 app.use(router.allowedMethods());
 app.listen({ port: 5010 });
 
-console.log("DICOMweb server running on http://localhost:4001/dicomweb");
+console.log("DICOMweb server running on http://localhost:5010/dicomweb");
