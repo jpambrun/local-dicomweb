@@ -1,3 +1,4 @@
 data/
 _dicomweb/
 *.exe
+_stow/

@@ -208,7 +208,7 @@ const insertSeries = async (studyInstanceUID, seriesInstanceUID, dicomDict) => {
   }
 };
 
-async function processDicomFile(filePath) {
+export async function processDicomFile(filePath) {
   if (await db.get(`filepath:${filePath}`)) return;
 
   await new Promise((resolve) => {

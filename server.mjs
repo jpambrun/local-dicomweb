@@ -4,6 +4,8 @@ import fs from "node:fs";
 import { Application, Router } from "jsr:@oak/oak";
 import { oakCors } from "https://deno.land/x/cors/mod.ts";
 import { open } from "npm:lmdb";
+import { parseMultipartStream } from "jsr:@mjackson/multipart-parser";
+import { processDicomFile } from './crawl.mjs'
 
 const db = open({ path: "_dicomweb", useVersions: true });
 
@@ -40,6 +42,28 @@ function recusivelyReplaceBulkDataURI(dict, pathPrefix = "") {
   }
   return dict;
 }
+
+const trimLeadingWhitespace = new TransformStream({
+  start(controller) {
+    this.firstChunk = true;
+  },
+  transform(chunk, controller) {
+    if (this.firstChunk) {
+      const view = new Uint8Array(chunk);
+      let start = 0;
+      for (let i = 0; i < view.length; i++) {
+        if (view[i] !== 13 && view[i] !== 10) { // \r is 13, \n is 10
+          start = i;
+          break;
+        }
+      }
+      this.firstChunk = false;
+      controller.enqueue(chunk.slice(start));
+    } else {
+      controller.enqueue(chunk);
+    }
+  }
+});
 
 const router = new Router();
 
@@ -135,6 +159,36 @@ router.get("/dicomweb/studies/:studyInstanceUID/series", async (ctx) => {
   }
 
   ctx.response.body = series;
+});
+
+router.post("/dicomweb/studies", async (ctx) => {
+  console.log("Received C-STORE request");
+  const requestBodyStream = await ctx.request.body.stream;
+  const contentType = ctx.request.headers.get("content-type");
+  const boundary =  contentType.split("boundary=")[1]?.replaceAll(`"`, ``);
+  if (!boundary) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Missing boundary in content-type" };
+    return;
+  }
+  const cleanedStream = requestBodyStream.pipeThrough(trimLeadingWhitespace);
+  try {
+    for await (let part of parseMultipartStream(cleanedStream, { boundary })) {
+      const filename = `./_stow/${crypto.randomUUID()}.dcm`;
+      await Deno.mkdir("./_stow", { recursive: true });
+      await Deno.writeFile(filename, part.bytes)
+      await processDicomFile(filename)
+    }
+  } catch (error) {
+    if (error.name === 'MultipartParseError') {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Invalid multipart request" };
+      return;
+    } else {
+      throw error;
+    }
+  }
+  ctx.response.status = 202;
 });
 
 router.get("/dicomweb/studies/:studyInstanceUID/series/:seriesInstanceUID/metadata", async (ctx) => {
@@ -238,6 +292,6 @@ const app = new Application();
 app.use(oakCors());
 app.use(router.routes());
 app.use(router.allowedMethods());
-app.listen({ port: 4001 });
+app.listen({ port: 5010 });
 
 console.log("DICOMweb server running on http://localhost:4001/dicomweb");
