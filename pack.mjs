@@ -22,7 +22,7 @@ function isPrivateTag(tagString) {
 const baseTags = new Set([
   "00200032",
   "00080032",
-  ]);
+]);
 
 for (const studyKey of db.getKeys({
 	start: "study:",
@@ -62,7 +62,7 @@ for (const studyKey of db.getKeys({
 	const appender = await connection.createAppender('temp_instance_table');
 	for (const instance of instances) {
 	  for (const publicTag of publicTags){
-			appender.appendVarchar(instance[publicTag] ? JSON.stringify(instance[publicTag]) : '');
+			appender.appendVarchar(instance[publicTag] ? JSON.stringify(instance[publicTag]) : '{}');
 		}
 
 		const privateTagObject = {};
@@ -71,7 +71,7 @@ for (const studyKey of db.getKeys({
         privateTagObject[privateTag] = instance[privateTag];
       }
     }
-		appender.appendVarchar(JSON.stringify(privateTagObject))
+		appender.appendVarchar(JSON.stringify(privateTagObject));
 		appender.endRow();
 	}
 	appender.closeSync();

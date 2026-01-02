@@ -15,13 +15,12 @@ CREATE OR REPLACE VIEW instances AS
 SELECT
   TRY("00020010"->>'$.Value[0]')::VARCHAR as TransferSyntaxUID,
   TRY("00080018"->>'$.Value[0]')::VARCHAR as SOPInstanceUID,
-  TRY("00080032"->>'$.Value')::VARCHAR as AcquisitionTime,
-  -- TRY("00200032"->>'$.Value[0]')::VARCHAR as ImagePositionPatient,
-  -- TRY("00200032") as ImagePositionPatient,
+  TRY("00080032"->>'$.Value[0]')::VARCHAR as AcquisitionTime,
+  TRY("00200032"->>'$.Value')::VARCHAR as ImagePositionPatient,
   TRY(strptime("00080020"->>'$.Value[0]', '%Y%m%d'))::Date AS StudyDate,
   TRY("00080060"->>'$.Value[0]')::VARCHAR as Modality,
   privateTags->>'$.00090001.Value[0]' as FileName
-FROM '*/*.parquet';
+FROM read_parquet('*/*.parquet', union_by_name = true);
 
 SELECT * from instances ORDER BY StudyDate;
 
