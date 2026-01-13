@@ -1,0 +1,20 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"lib": ["esnext"],
+		"types": ["bun-types"],
+		"jsx": "react-jsx",
+		"jsxImportSource": "react",
+		"strict": true,
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"allowJs": true,
+		"noEmit": true,
+		"resolveJsonModule": true,
+		"isolatedModules": true
+	},
+	"include": ["*.ts", "*.mts", "@types/**/*.d.ts"],
+	"exclude": ["node_modules"]
+}

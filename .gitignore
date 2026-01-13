@@ -1,4 +1,7 @@
 data/
-_dicomweb/
 *.exe
-_stow/
+jet/
+nats-server
+node_modules/
+_*/
+data

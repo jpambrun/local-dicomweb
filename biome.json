@@ -1,0 +1,14 @@
+{
+	"overrides": [
+		{
+			"include": ["*.ts"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noExplicitAny": "off"
+					}
+				}
+			}
+		}
+	]
+}

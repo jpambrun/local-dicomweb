@@ -1,17 +1,26 @@
 serve:
-    deno run -A --watch server.mjs
+    bun run --hot server.ts
 
 crawl:
-    deno run -A crawl.mjs
+    bun run crawl.ts
+
+pack:
+  bun run pack.ts
 
 clean:
-    rm dicomweb/*
+    rm -rf _dicomweb
 
 compile:
-    deno compile  -A --target=x86_64-pc-windows-msvc main.mjs --output local-dicomweb.exe
+    bun build --compile main.mjs --outfile local-dicomweb
 
 fmt:
-    deno fmt --line-width=120
+    bunx biome format --write .
+
+check:
+    bunx biome check .
+
+tsc:
+  bunx tsc
 
 tag: compile
     #! /bin/bash
